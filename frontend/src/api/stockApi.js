@@ -7,6 +7,8 @@ export const stockApi = {
     apiClient
       .get(`/stock/${productId}/movements`, { params })
       .then((r) => r.data),
+  listAllMovements: (params = {}) =>
+    apiClient.get('/stock/movements', { params }).then((r) => r.data),
   createMovement: (data) =>
     apiClient.post('/stock/movement', data).then((r) => r.data),
   reverseMovement: (movementId, data = {}) =>

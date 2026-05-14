@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/authStore';
 const TITLES = {
   '/': 'Dashboard',
   '/stock': 'Stock',
+  '/movements': 'Movimientos',
   '/orders': 'Pedidos',
 };
 

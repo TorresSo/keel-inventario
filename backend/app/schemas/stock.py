@@ -13,6 +13,7 @@ class StockCurrentResponse(BaseModel):
     product_code: str
     product_name: str
     category: str
+    origin: str
     quantity_boxes: int
     quantity_units: int
     min_stock_boxes: int

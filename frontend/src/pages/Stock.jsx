@@ -1,10 +1,44 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { productsApi } from '../api/productsApi';
 import { stockApi } from '../api/stockApi';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import { selectIsGerencia, useAuthStore } from '../store/authStore';
 import { notifyError, notifySuccess } from '../store/uiStore';
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+const TABS = [
+  { key: 'ARTICULOS', label: 'Artículos' },
+  { key: 'BETTANIN_CHINA', label: 'Bettanin · China' },
+  { key: 'BASES', label: 'Bases' },
+  { key: 'MATERIA_PRIMA', label: 'Materia Prima' },
+  { key: 'INSUMOS', label: 'Insumos' },
+  { key: 'FIBRA', label: 'Fibra' },
+];
+
+const CATEGORY_LABEL = {
+  ESCOBILLONES: 'Escobillón',
+  ESCOBAS: 'Escoba',
+  CEPILLOS: 'Cepillo',
+  SECADORES: 'Secador',
+  BALDES_Y_ACCESORIOS: 'Varios',
+  ESPONJAS: 'Esponja',
+  ANDENES: 'Andén',
+  BASES_Y_CABOS: 'Base / Cabo',
+  MATERIA_PRIMA: 'Materia prima',
+  INSUMOS: 'Insumo',
+  FIBRA: 'Fibra',
+};
+
+const ORIGIN_LABEL = {
+  FABRICACION_PROPIA: 'Propio',
+  IMPORTADO_BRASIL: 'Brasil',
+  IMPORTADO_CHINA: 'China',
+};
 
 const MOVEMENT_TYPES = [
   { value: 'INGRESO_PRODUCCION', label: 'Ingreso · Producción', sign: 1 },
@@ -14,11 +48,41 @@ const MOVEMENT_TYPES = [
   { value: 'AJUSTE', label: 'Ajuste manual', sign: 1 },
 ];
 
+function tabFor(product) {
+  if (
+    product.origin === 'IMPORTADO_BRASIL' ||
+    product.origin === 'IMPORTADO_CHINA'
+  )
+    return 'BETTANIN_CHINA';
+  if (product.category === 'MATERIA_PRIMA') return 'MATERIA_PRIMA';
+  if (product.category === 'INSUMOS') return 'INSUMOS';
+  if (product.category === 'FIBRA') return 'FIBRA';
+  if (product.category === 'BASES_Y_CABOS') return 'BASES';
+  return 'ARTICULOS';
+}
+
+function normalize(s) {
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
 export default function Stock() {
   const [stock, setStock] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('ARTICULOS');
+  const [search, setSearch] = useState('');
   const [movementOpen, setMovementOpen] = useState(false);
+  const [newProductOpen, setNewProductOpen] = useState(false);
   const [historyProduct, setHistoryProduct] = useState(null);
+
+  const isGerencia = useAuthStore(selectIsGerencia);
 
   const loadStock = () => {
     setLoading(true);
@@ -35,24 +99,64 @@ export default function Stock() {
     loadStock();
   }, []);
 
+  // Pre-bucket by tab (O(N) once instead of O(N) per re-render)
+  const buckets = useMemo(() => {
+    const out = Object.fromEntries(TABS.map((t) => [t.key, []]));
+    for (const p of stock) out[tabFor(p)].push(p);
+    return out;
+  }, [stock]);
+
+  const counts = useMemo(
+    () => Object.fromEntries(TABS.map((t) => [t.key, buckets[t.key].length])),
+    [buckets]
+  );
+
+  // Filter active tab by search
+  const visible = useMemo(() => {
+    const list = buckets[tab] || [];
+    const q = normalize(search.trim());
+    if (!q) return list;
+    return list.filter(
+      (p) =>
+        normalize(p.product_code).includes(q) ||
+        normalize(p.product_name).includes(q)
+    );
+  }, [buckets, tab, search]);
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">
-          {stock.length} productos activos
-        </p>
-        <button
-          onClick={() => setMovementOpen(true)}
-          className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
-        >
-          Registrar movimiento
-        </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <SearchBar value={search} onChange={setSearch} />
+        <div className="flex flex-1 justify-end gap-2">
+          <button
+            onClick={() => setMovementOpen(true)}
+            className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
+          >
+            + Movimiento
+          </button>
+          {isGerencia && (
+            <button
+              onClick={() => setNewProductOpen(true)}
+              className="rounded-md border border-emerald-500/40 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10"
+            >
+              + Producto
+            </button>
+          )}
+        </div>
       </div>
+
+      <Tabs tabs={TABS} counts={counts} active={tab} onChange={setTab} />
 
       {loading ? (
         <p className="text-slate-400">Cargando...</p>
       ) : (
-        <StockTable rows={stock} onRowClick={setHistoryProduct} />
+        <>
+          <p className="text-xs text-slate-500">
+            {visible.length} {visible.length === 1 ? 'producto' : 'productos'}
+            {search && ` · filtrado por "${search}"`}
+          </p>
+          <StockTable rows={visible} tab={tab} onRowClick={setHistoryProduct} />
+        </>
       )}
 
       <MovementModal
@@ -61,6 +165,15 @@ export default function Stock() {
         products={stock}
         onCreated={() => {
           setMovementOpen(false);
+          loadStock();
+        }}
+      />
+
+      <NewProductModal
+        open={newProductOpen}
+        onClose={() => setNewProductOpen(false)}
+        onCreated={() => {
+          setNewProductOpen(false);
           loadStock();
         }}
       />
@@ -74,7 +187,78 @@ export default function Stock() {
   );
 }
 
-function StockTable({ rows, onRowClick }) {
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function SearchBar({ value, onChange }) {
+  return (
+    <div className="relative w-full sm:w-80">
+      <svg
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <circle cx="11" cy="11" r="7" />
+        <path d="m21 21-4.3-4.3" strokeLinecap="round" />
+      </svg>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Buscar por código o nombre..."
+        className="w-full rounded-md border border-slate-700 bg-slate-900 py-2 pl-9 pr-3 text-sm placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+      />
+      {value && (
+        <button
+          onClick={() => onChange('')}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded text-slate-500 hover:text-slate-200"
+          aria-label="Limpiar"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Tabs({ tabs, counts, active, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-1 border-b border-slate-800">
+      {tabs.map((t) => {
+        const isActive = t.key === active;
+        return (
+          <button
+            key={t.key}
+            onClick={() => onChange(t.key)}
+            className={`relative -mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition ${
+              isActive
+                ? 'border-emerald-500 text-emerald-300'
+                : 'border-transparent text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            {t.label}
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-xs font-mono ${
+                isActive
+                  ? 'bg-emerald-500/20 text-emerald-200'
+                  : 'bg-slate-800 text-slate-500'
+              }`}
+            >
+              {counts[t.key]}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StockTable({ rows, tab, onRowClick }) {
+  const showOrigin = tab === 'BETTANIN_CHINA';
+
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-700">
       <table className="min-w-full divide-y divide-slate-700">
@@ -86,21 +270,42 @@ function StockTable({ rows, onRowClick }) {
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
               Producto
             </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Categoría
+            {showOrigin && (
+              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Origen
+              </th>
+            )}
+            <th
+              className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400"
+              title="Fracción: unidades por caja"
+            >
+              FR
             </th>
             <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Cajas
             </th>
             <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Unidades
+            </th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
               Mínimo
             </th>
             <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Alerta
+              Estado
             </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-700 bg-slate-900">
+          {rows.length === 0 && (
+            <tr>
+              <td
+                colSpan={showOrigin ? 8 : 7}
+                className="px-3 py-8 text-center text-sm text-slate-500"
+              >
+                Sin productos en esta categoría
+              </td>
+            </tr>
+          )}
           {rows.map((r) => (
             <tr
               key={r.product_id}
@@ -110,14 +315,33 @@ function StockTable({ rows, onRowClick }) {
               <td className="px-3 py-2 font-mono text-sm text-emerald-300">
                 {r.product_code}
               </td>
-              <td className="px-3 py-2 text-sm">{r.product_name}</td>
-              <td className="px-3 py-2 text-xs text-slate-500">
-                {r.category}
+              <td className="px-3 py-2 text-sm">
+                <p className="text-slate-100">{r.product_name}</p>
+                <p className="text-xs text-slate-500">
+                  {CATEGORY_LABEL[r.category] || r.category}
+                </p>
+              </td>
+              {showOrigin && (
+                <td className="px-3 py-2 text-xs">
+                  <Badge
+                    variant={
+                      r.origin === 'IMPORTADO_BRASIL' ? 'info' : 'warning'
+                    }
+                  >
+                    {ORIGIN_LABEL[r.origin] || r.origin}
+                  </Badge>
+                </td>
+              )}
+              <td className="px-3 py-2 text-right font-mono text-xs text-slate-400">
+                {r.pack_size}
               </td>
               <td
-                className={`px-3 py-2 text-right font-mono text-sm ${r.quantity_boxes < 0 ? 'text-red-300 font-semibold' : ''}`}
+                className={`px-3 py-2 text-right font-mono text-sm ${r.quantity_boxes < 0 ? 'font-semibold text-red-300' : ''}`}
               >
-                {r.quantity_boxes}
+                {r.quantity_boxes.toLocaleString('es-AR')}
+              </td>
+              <td className="px-3 py-2 text-right font-mono text-sm text-slate-300">
+                {r.quantity_units.toLocaleString('es-AR')}
               </td>
               <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">
                 {r.min_stock_boxes}
@@ -137,13 +361,14 @@ function StockTable({ rows, onRowClick }) {
   );
 }
 
-function Field({ label, children }) {
+function Field({ label, children, hint }) {
   return (
     <div>
       <label className="mb-1 block text-xs font-semibold text-slate-400">
         {label}
       </label>
       {children}
+      {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
     </div>
   );
 }
@@ -157,6 +382,14 @@ function MovementModal({ open, onClose, products, onCreated }) {
 
   const typeMeta = MOVEMENT_TYPES.find((t) => t.value === type);
   const isEgreso = typeMeta?.sign === -1;
+
+  const sortedProducts = useMemo(
+    () =>
+      [...products].sort((a, b) =>
+        a.product_name.localeCompare(b.product_name, 'es')
+      ),
+    [products]
+  );
 
   const submit = async (e) => {
     e.preventDefault();
@@ -194,9 +427,9 @@ function MovementModal({ open, onClose, products, onCreated }) {
             className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           >
             <option value="">— Seleccionar —</option>
-            {products.map((p) => (
+            {sortedProducts.map((p) => (
               <option key={p.product_id} value={p.product_id}>
-                {p.product_code} — {p.product_name}
+                {p.product_name} ({p.product_code})
               </option>
             ))}
           </select>
@@ -214,7 +447,7 @@ function MovementModal({ open, onClose, products, onCreated }) {
             ))}
           </select>
         </Field>
-        <Field label={`Cantidad en cajas${isEgreso ? ' (se restará)' : ''}`}>
+        <Field label={`Cantidad en cajas${isEgreso ? ' (se restará del stock)' : ''}`}>
           <input
             type="number"
             min="1"
@@ -246,6 +479,155 @@ function MovementModal({ open, onClose, products, onCreated }) {
             className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
           >
             {submitting ? 'Guardando...' : 'Registrar'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function NewProductModal({ open, onClose, onCreated }) {
+  const [form, setForm] = useState({
+    code: '',
+    name: '',
+    description: '',
+    category: 'ESCOBILLONES',
+    origin: 'FABRICACION_PROPIA',
+    pack_size: 1,
+    min_stock_boxes: 0,
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  const update = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await productsApi.create({
+        ...form,
+        description: form.description || null,
+        pack_size: Number(form.pack_size) || 1,
+        min_stock_boxes: Number(form.min_stock_boxes) || 0,
+      });
+      notifySuccess(`Producto ${form.code} creado`);
+      setForm({
+        code: '',
+        name: '',
+        description: '',
+        category: 'ESCOBILLONES',
+        origin: 'FABRICACION_PROPIA',
+        pack_size: 1,
+        min_stock_boxes: 0,
+      });
+      onCreated();
+    } catch (err) {
+      notifyError(err.response?.data?.detail || 'No se pudo crear el producto');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Nuevo producto"
+      className="max-w-xl"
+    >
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Código" hint="Identificador único — ej. 212, BT487, ESC-99">
+            <input
+              type="text"
+              value={form.code}
+              onChange={(e) => update('code', e.target.value)}
+              required
+              maxLength={50}
+              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </Field>
+          <Field label="Pack size (FR)" hint="Unidades por caja">
+            <input
+              type="number"
+              min="1"
+              value={form.pack_size}
+              onChange={(e) => update('pack_size', e.target.value)}
+              required
+              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-right font-mono text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </Field>
+        </div>
+        <Field label="Nombre">
+          <input
+            type="text"
+            value={form.name}
+            onChange={(e) => update('name', e.target.value)}
+            required
+            maxLength={255}
+            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+        </Field>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Categoría">
+            <select
+              value={form.category}
+              onChange={(e) => update('category', e.target.value)}
+              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              {Object.entries(CATEGORY_LABEL).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Origen">
+            <select
+              value={form.origin}
+              onChange={(e) => update('origin', e.target.value)}
+              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="FABRICACION_PROPIA">Fabricación propia</option>
+              <option value="IMPORTADO_BRASIL">Importado · Brasil</option>
+              <option value="IMPORTADO_CHINA">Importado · China</option>
+            </select>
+          </Field>
+        </div>
+        <Field
+          label="Stock mínimo (cajas)"
+          hint="Cuando el stock baje de este número, se va a marcar en alerta"
+        >
+          <input
+            type="number"
+            min="0"
+            value={form.min_stock_boxes}
+            onChange={(e) => update('min_stock_boxes', e.target.value)}
+            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-right font-mono text-sm focus:border-emerald-500 focus:outline-none"
+          />
+        </Field>
+        <Field label="Descripción (opcional)">
+          <textarea
+            value={form.description}
+            onChange={(e) => update('description', e.target.value)}
+            rows={2}
+            className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+        </Field>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md bg-slate-800 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+          >
+            {submitting ? 'Creando...' : 'Crear producto'}
           </button>
         </div>
       </form>
@@ -365,7 +747,7 @@ function HistoryModal({ product, onClose, onAfterChange }) {
                       {m.quantity_boxes}
                     </td>
                     <td
-                      className={`px-3 py-2 text-right font-mono text-sm ${m.stock_after_boxes < 0 ? 'text-red-300 font-semibold' : ''}`}
+                      className={`px-3 py-2 text-right font-mono text-sm ${m.stock_after_boxes < 0 ? 'font-semibold text-red-300' : ''}`}
                     >
                       {m.stock_after_boxes}
                     </td>

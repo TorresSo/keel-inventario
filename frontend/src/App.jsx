@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
+import Movements from './pages/Movements';
 import Orders from './pages/Orders';
 import Stock from './pages/Stock';
 import { selectIsAuthenticated, useAuthStore } from './store/authStore';
@@ -38,6 +39,7 @@ export default function App() {
         >
           <Route path="/" element={<Dashboard />} />
           <Route path="/stock" element={<Stock />} />
+          <Route path="/movements" element={<Movements />} />
           <Route path="/orders" element={<Orders />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

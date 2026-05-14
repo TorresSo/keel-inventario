@@ -182,6 +182,7 @@ async def list_current_stock(db: AsyncSession) -> list[dict]:
             Product.code.label("product_code"),
             Product.name.label("product_name"),
             Product.category,
+            Product.origin,
             Product.pack_size,
             Product.min_stock_boxes,
             func.coalesce(StockCurrent.quantity_boxes, 0).label("quantity_boxes"),
@@ -191,7 +192,7 @@ async def list_current_stock(db: AsyncSession) -> list[dict]:
         .select_from(Product)
         .outerjoin(StockCurrent, StockCurrent.product_id == Product.id)
         .where(Product.is_active.is_(True))
-        .order_by(Product.code)
+        .order_by(Product.name)
     )
     result = await db.execute(stmt)
     return [
@@ -200,6 +201,7 @@ async def list_current_stock(db: AsyncSession) -> list[dict]:
             "product_code": row.product_code,
             "product_name": row.product_name,
             "category": row.category,
+            "origin": row.origin,
             "quantity_boxes": row.quantity_boxes,
             "quantity_units": row.quantity_units,
             "min_stock_boxes": row.min_stock_boxes,

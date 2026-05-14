@@ -37,6 +37,16 @@ async def list_alerts(
     return await stock_service.list_alerts(db)
 
 
+@router.get("/movements", response_model=list[MovementResponse])
+async def list_all_movements(
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_any_role),
+) -> list[dict]:
+    return await stock_service.list_movements(db, limit=limit, offset=offset)
+
+
 @router.get("/{product_id}/movements", response_model=list[MovementResponse])
 async def list_movements_for_product(
     product_id: uuid.UUID,

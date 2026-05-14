@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/authStore';
 const LINKS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/stock', label: 'Stock' },
+  { to: '/movements', label: 'Movimientos' },
   { to: '/orders', label: 'Pedidos' },
 ];
 
