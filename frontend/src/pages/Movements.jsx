@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { stockApi } from '../api/stockApi';
 import Badge from '../components/ui/Badge';
-import { notifyError } from '../store/uiStore';
+import Modal from '../components/ui/Modal';
+import { selectIsGerencia, useAuthStore } from '../store/authStore';
+import { notifyError, notifySuccess } from '../store/uiStore';
 
 const TYPE_LABEL = {
   INGRESO_PRODUCCION: 'Ingreso · Producción',
@@ -48,10 +50,13 @@ function formatTime(iso) {
 const PAGE_SIZE = 200;
 
 export default function Movements() {
+  const isGerencia = useAuthStore(selectIsGerencia);
   const [movements, setMovements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [pendingReverse, setPendingReverse] = useState(null);
+  const [reversingId, setReversingId] = useState(null);
 
   const loadPage = async (offset = 0) => {
     try {
@@ -60,18 +65,29 @@ export default function Movements() {
         offset,
       });
       setHasMore(page.length === PAGE_SIZE);
-      setMovements((prev) =>
-        offset === 0 ? page : [...prev, ...page]
-      );
+      setMovements((prev) => (offset === 0 ? page : [...prev, ...page]));
     } catch (err) {
       notifyError(err.response?.data?.detail || 'Error al cargar movimientos');
     }
   };
 
-  useEffect(() => {
+  const reload = async () => {
     setLoading(true);
-    loadPage(0).finally(() => setLoading(false));
+    await loadPage(0);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    reload();
   }, []);
+
+  const reversedSet = useMemo(() => {
+    const s = new Set();
+    for (const m of movements) {
+      if (m.reversed_movement_id) s.add(m.reversed_movement_id);
+    }
+    return s;
+  }, [movements]);
 
   const grouped = useMemo(() => {
     const byDay = new Map();
@@ -89,6 +105,27 @@ export default function Movements() {
     setLoadingMore(true);
     await loadPage(movements.length);
     setLoadingMore(false);
+  };
+
+  const doReverse = async (movementId, confirmNegative = false) => {
+    setReversingId(movementId);
+    try {
+      await stockApi.reverseMovement(movementId, {
+        confirm_negative: confirmNegative,
+      });
+      notifySuccess('Movimiento revertido');
+      setPendingReverse(null);
+      await reload();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      if (detail?.code === 'REVERSAL_WOULD_GO_NEGATIVE') {
+        setPendingReverse({ movementId, detail });
+      } else {
+        notifyError(detail || 'No se pudo revertir');
+      }
+    } finally {
+      setReversingId(null);
+    }
   };
 
   if (loading) return <p className="text-slate-400">Cargando...</p>;
@@ -116,7 +153,18 @@ export default function Movements() {
           </div>
           <ul className="space-y-2">
             {items.map((m) => (
-              <MovementRow key={m.id} movement={m} />
+              <MovementRow
+                key={m.id}
+                movement={m}
+                canReverse={
+                  isGerencia &&
+                  m.movement_type !== 'REVERSA' &&
+                  !reversedSet.has(m.id)
+                }
+                alreadyReversed={reversedSet.has(m.id)}
+                reversing={reversingId === m.id}
+                onReverse={() => doReverse(m.id, false)}
+              />
             ))}
           </ul>
         </section>
@@ -133,11 +181,58 @@ export default function Movements() {
           </button>
         </div>
       )}
+
+      <Modal
+        open={Boolean(pendingReverse)}
+        onClose={() => setPendingReverse(null)}
+        title="Esta reversión deja stock en negativo"
+        className="max-w-md"
+      >
+        {pendingReverse && (
+          <div className="space-y-3 text-sm">
+            <p className="text-amber-200">
+              Si revertís este movimiento el stock va a quedar negativo.
+            </p>
+            <div className="rounded-md bg-slate-900 p-3 font-mono text-xs">
+              <p>
+                <span className="text-slate-500">Stock actual:</span>{' '}
+                {pendingReverse.detail.current_boxes} cajas
+              </p>
+              <p>
+                <span className="text-slate-500">Después de revertir:</span>{' '}
+                <span className="font-semibold text-red-300">
+                  {pendingReverse.detail.boxes_after_reversal} cajas
+                </span>
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setPendingReverse(null)}
+                className="rounded-md bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => doReverse(pendingReverse.movementId, true)}
+                className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-amber-400"
+              >
+                Confirmar igual
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
 
-function MovementRow({ movement: m }) {
+function MovementRow({
+  movement: m,
+  canReverse,
+  alreadyReversed,
+  reversing,
+  onReverse,
+}) {
   const variant = TYPE_VARIANT[m.movement_type] || 'info';
   const sign = m.quantity_boxes > 0 ? '+' : '';
   const qtyClass =
@@ -147,15 +242,43 @@ function MovementRow({ movement: m }) {
         ? 'text-emerald-300'
         : 'text-slate-300';
 
+  const isReversa = m.movement_type === 'REVERSA';
+
+  const askConfirm = (e) => {
+    e.stopPropagation();
+    if (
+      window.confirm(
+        '¿Revertir este movimiento?\n\nEl asiento original queda en el historial y se crea un movimiento compensatorio (REVERSA) que devuelve el stock a como estaba antes.'
+      )
+    ) {
+      onReverse();
+    }
+  };
+
   return (
-    <li className="grid grid-cols-12 items-center gap-2 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-sm">
+    <li
+      className={`grid grid-cols-12 items-center gap-2 rounded-md border px-3 py-2 text-sm ${
+        isReversa
+          ? 'border-amber-500/30 bg-amber-900/10'
+          : alreadyReversed
+            ? 'border-slate-800 bg-slate-950 opacity-60'
+            : 'border-slate-800 bg-slate-950'
+      }`}
+    >
       <span className="col-span-2 sm:col-span-1 font-mono text-xs text-slate-500">
         {formatTime(m.created_at)}
       </span>
       <span className="col-span-10 sm:col-span-3">
-        <Badge variant={variant}>{TYPE_LABEL[m.movement_type] || m.movement_type}</Badge>
+        <Badge variant={variant}>
+          {TYPE_LABEL[m.movement_type] || m.movement_type}
+        </Badge>
+        {alreadyReversed && (
+          <Badge variant="warning" className="ml-2">
+            revertido
+          </Badge>
+        )}
       </span>
-      <span className="col-span-5 sm:col-span-4 truncate">
+      <span className="col-span-5 sm:col-span-3 truncate">
         <span className="font-mono text-emerald-300">{m.product_code}</span>{' '}
         <span className="text-slate-400">{m.product_name}</span>
       </span>
@@ -165,8 +288,20 @@ function MovementRow({ movement: m }) {
         {sign}
         {m.quantity_boxes} caj.
       </span>
-      <span className="col-span-4 sm:col-span-2 text-right font-mono text-xs text-slate-500">
+      <span className="col-span-3 sm:col-span-2 text-right font-mono text-xs text-slate-500">
         → {m.stock_after_boxes}
+      </span>
+      <span className="col-span-1 flex justify-end">
+        {canReverse && (
+          <button
+            onClick={askConfirm}
+            disabled={reversing}
+            title="Revertir este movimiento"
+            className="rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-red-500/30 hover:text-red-200 disabled:opacity-30"
+          >
+            {reversing ? '...' : '↶'}
+          </button>
+        )}
       </span>
       {m.notes && (
         <span className="col-span-12 truncate pl-12 text-xs italic text-slate-500">
