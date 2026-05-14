@@ -1,6 +1,9 @@
 import uuid
+from datetime import datetime
+from io import BytesIO
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, require_any_role, require_gerencia
@@ -27,6 +30,74 @@ async def list_current_stock(
     _: object = Depends(require_any_role),
 ) -> list[dict]:
     return await stock_service.list_current_stock(db)
+
+
+@router.get("/export", response_class=StreamingResponse)
+async def export_stock_xlsx(
+    db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_any_role),
+) -> StreamingResponse:
+    """Download a snapshot of current stock as a multi-sheet XLSX (one sheet per category)."""
+    from openpyxl import Workbook
+
+    rows = await stock_service.list_current_stock(db)
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    by_cat: dict[str, list[dict]] = {}
+    for r in rows:
+        cat_key = (
+            r["category"].value if hasattr(r["category"], "value") else str(r["category"])
+        )
+        by_cat.setdefault(cat_key, []).append(r)
+
+    for cat in sorted(by_cat):
+        ws = wb.create_sheet(cat[:31])
+        ws.append(
+            [
+                "Código",
+                "Nombre",
+                "Origen",
+                "FR (unid/caja)",
+                "Cajas",
+                "Unidades",
+                "Mínimo",
+                "Alerta",
+            ]
+        )
+        for r in sorted(by_cat[cat], key=lambda x: x["product_name"]):
+            origin = (
+                r["origin"].value if hasattr(r["origin"], "value") else str(r["origin"])
+            )
+            ws.append(
+                [
+                    r["product_code"],
+                    r["product_name"],
+                    origin,
+                    r["pack_size"],
+                    r["quantity_boxes"],
+                    r["quantity_units"],
+                    r["min_stock_boxes"],
+                    "BAJO" if r["is_below_minimum"] else "OK",
+                ]
+            )
+        # Reasonable column widths
+        for col_letter, width in zip("ABCDEFGH", (12, 42, 18, 10, 10, 12, 10, 10)):
+            ws.column_dimensions[col_letter].width = width
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"stock-keel-{datetime.now().strftime('%Y-%m-%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/alerts", response_model=list[StockAlertResponse])

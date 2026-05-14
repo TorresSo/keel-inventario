@@ -15,4 +15,6 @@ export const stockApi = {
     apiClient
       .post(`/stock/movements/${movementId}/reverse`, data)
       .then((r) => r.data),
+  exportXlsx: () =>
+    apiClient.get('/stock/export', { responseType: 'blob' }).then((r) => r.data),
 };

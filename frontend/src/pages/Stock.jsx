@@ -156,6 +156,62 @@ export default function Stock() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Inline edit: quantity → registers an AJUSTE movement (audited, reversible)
+  const onStockAdjust = async (product, newValue) => {
+    const delta = newValue - product.quantity_boxes;
+    if (delta === 0) return;
+    try {
+      await stockApi.createMovement({
+        product_id: product.product_id,
+        movement_type: 'AJUSTE',
+        quantity_boxes: delta,
+        quantity_units: 0,
+        notes: `Ajuste manual: ${product.quantity_boxes} → ${newValue} cajas`,
+      });
+      notifySuccess(
+        `${product.product_code}: ${delta > 0 ? '+' : ''}${delta} cajas`
+      );
+      loadStock();
+    } catch (err) {
+      notifyError(
+        err.response?.data?.detail || 'No se pudo ajustar el stock'
+      );
+    }
+  };
+
+  // Inline edit: min stock → simple product update (GERENCIA only)
+  const onMinUpdate = async (product, newValue) => {
+    if (newValue === product.min_stock_boxes) return;
+    try {
+      await productsApi.update(product.product_id, {
+        min_stock_boxes: Number(newValue),
+      });
+      notifySuccess(`Mínimo de ${product.product_code} actualizado`);
+      loadStock();
+    } catch (err) {
+      notifyError(
+        err.response?.data?.detail || 'No se pudo actualizar el mínimo'
+      );
+    }
+  };
+
+  const onExport = async () => {
+    try {
+      const blob = await stockApi.exportXlsx();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `stock-keel-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      notifySuccess('Stock exportado');
+    } catch (err) {
+      notifyError('No se pudo exportar el stock');
+    }
+  };
+
   // Pre-bucket by tab (O(N) once instead of O(N) per re-render)
   const buckets = useMemo(() => {
     const out = Object.fromEntries(TABS.map((t) => [t.key, []]));
@@ -185,6 +241,13 @@ export default function Stock() {
       <div className="flex flex-wrap items-center gap-3">
         <SearchBar value={search} onChange={setSearch} />
         <div className="flex flex-1 justify-end gap-2">
+          <button
+            onClick={onExport}
+            title="Descargar stock actual como Excel"
+            className="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+          >
+            ⤓ Exportar
+          </button>
           <button
             onClick={() => setMovementOpen(true)}
             className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
@@ -216,6 +279,9 @@ export default function Stock() {
             rows={visible}
             tab={tab}
             onRowClick={setHistoryProduct}
+            onStockAdjust={onStockAdjust}
+            onMinUpdate={onMinUpdate}
+            isGerencia={isGerencia}
           />
         </>
       )}
@@ -318,7 +384,14 @@ function Tabs({ tabs, counts, active, onChange }) {
   );
 }
 
-function SectionedStock({ rows, tab, onRowClick }) {
+function SectionedStock({
+  rows,
+  tab,
+  onRowClick,
+  onStockAdjust,
+  onMinUpdate,
+  isGerencia,
+}) {
   // Group rows by section key, preserving the declared section order.
   const sections = useMemo(() => {
     const order = SECTION_ORDER[tab] || [];
@@ -355,13 +428,24 @@ function SectionedStock({ rows, tab, onRowClick }) {
           items={items}
           tab={tab}
           onRowClick={onRowClick}
+          onStockAdjust={onStockAdjust}
+          onMinUpdate={onMinUpdate}
+          isGerencia={isGerencia}
         />
       ))}
     </div>
   );
 }
 
-function SectionBlock({ title, items, tab, onRowClick }) {
+function SectionBlock({
+  title,
+  items,
+  tab,
+  onRowClick,
+  onStockAdjust,
+  onMinUpdate,
+  isGerencia,
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const totalBoxes = items.reduce((s, r) => s + r.quantity_boxes, 0);
   const belowMin = items.filter((r) => r.is_below_minimum).length;
@@ -390,13 +474,27 @@ function SectionBlock({ title, items, tab, onRowClick }) {
         )}
       </header>
       {!collapsed && (
-        <StockTable rows={items} tab={tab} onRowClick={onRowClick} />
+        <StockTable
+          rows={items}
+          tab={tab}
+          onRowClick={onRowClick}
+          onStockAdjust={onStockAdjust}
+          onMinUpdate={onMinUpdate}
+          isGerencia={isGerencia}
+        />
       )}
     </section>
   );
 }
 
-function StockTable({ rows, tab, onRowClick }) {
+function StockTable({
+  rows,
+  tab,
+  onRowClick,
+  onStockAdjust,
+  onMinUpdate,
+  isGerencia,
+}) {
   const showOrigin = tab === 'BETTANIN_CHINA';
 
   return (
@@ -437,19 +535,24 @@ function StockTable({ rows, tab, onRowClick }) {
         </thead>
         <tbody className="divide-y divide-slate-800 bg-slate-950/40">
           {rows.map((r) => (
-            <tr
-              key={r.product_id}
-              onClick={() => onRowClick(r)}
-              className="cursor-pointer hover:bg-slate-800/50"
-            >
-              <td className="px-3 py-2 font-mono text-sm text-emerald-300">
+            <tr key={r.product_id} className="hover:bg-slate-800/50">
+              <td
+                onClick={() => onRowClick(r)}
+                className="cursor-pointer px-3 py-2 font-mono text-sm text-emerald-300"
+              >
                 {r.product_code}
               </td>
-              <td className="px-3 py-2 text-sm text-slate-100">
+              <td
+                onClick={() => onRowClick(r)}
+                className="cursor-pointer px-3 py-2 text-sm text-slate-100"
+              >
                 {r.product_name}
               </td>
               {showOrigin && (
-                <td className="px-3 py-2 text-xs">
+                <td
+                  onClick={() => onRowClick(r)}
+                  className="cursor-pointer px-3 py-2 text-xs"
+                >
                   <Badge
                     variant={
                       r.origin === 'IMPORTADO_BRASIL' ? 'info' : 'warning'
@@ -459,21 +562,44 @@ function StockTable({ rows, tab, onRowClick }) {
                   </Badge>
                 </td>
               )}
-              <td className="px-3 py-2 text-right font-mono text-xs text-slate-400">
+              <td
+                onClick={() => onRowClick(r)}
+                className="cursor-pointer px-3 py-2 text-right font-mono text-xs text-slate-400"
+              >
                 {r.pack_size}
               </td>
-              <td
-                className={`px-3 py-2 text-right font-mono text-sm ${r.quantity_boxes < 0 ? 'font-semibold text-red-300' : ''}`}
-              >
-                {r.quantity_boxes.toLocaleString('es-AR')}
+              <td className="px-3 py-2 text-right">
+                <EditableNumberCell
+                  value={r.quantity_boxes}
+                  onSave={(v) => onStockAdjust(r, v)}
+                  format={(v) => v.toLocaleString('es-AR')}
+                  className={`font-mono text-sm ${r.quantity_boxes < 0 ? 'font-semibold text-red-300' : 'text-slate-100'}`}
+                  title="Click para ajustar (registra movimiento AJUSTE en historial)"
+                />
               </td>
-              <td className="px-3 py-2 text-right font-mono text-sm text-slate-300">
+              <td
+                onClick={() => onRowClick(r)}
+                className="cursor-pointer px-3 py-2 text-right font-mono text-sm text-slate-400"
+              >
                 {r.quantity_units.toLocaleString('es-AR')}
               </td>
-              <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">
-                {r.min_stock_boxes}
+              <td className="px-3 py-2 text-right">
+                <EditableNumberCell
+                  value={r.min_stock_boxes}
+                  onSave={(v) => onMinUpdate(r, v)}
+                  disabled={!isGerencia}
+                  className="font-mono text-xs text-slate-400"
+                  title={
+                    isGerencia
+                      ? 'Click para editar el mínimo'
+                      : 'Solo GERENCIA puede editar el mínimo'
+                  }
+                />
               </td>
-              <td className="px-3 py-2 text-center">
+              <td
+                onClick={() => onRowClick(r)}
+                className="cursor-pointer px-3 py-2 text-center"
+              >
                 {r.is_below_minimum ? (
                   <Badge variant="danger">Bajo</Badge>
                 ) : (
@@ -485,6 +611,62 @@ function StockTable({ rows, tab, onRowClick }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function EditableNumberCell({
+  value,
+  onSave,
+  format,
+  className = '',
+  disabled = false,
+  title,
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = async () => {
+    setEditing(false);
+    const parsed = parseInt(draft, 10);
+    if (!Number.isFinite(parsed) || parsed === value) return;
+    await onSave(parsed);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setEditing(true)}
+        title={title}
+        className={`rounded px-1 py-0.5 ${disabled ? 'cursor-default' : 'hover:bg-emerald-500/10 hover:ring-1 hover:ring-emerald-500/40 cursor-text'} ${className}`}
+      >
+        {format ? format(value) : value}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      type="number"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') {
+          setDraft(String(value));
+          setEditing(false);
+        }
+      }}
+      autoFocus
+      onFocus={(e) => e.target.select()}
+      className={`w-24 rounded border border-emerald-500 bg-slate-900 px-2 py-0.5 text-right ${className}`}
+    />
   );
 }
 
