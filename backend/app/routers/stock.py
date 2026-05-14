@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, require_any_role, require_gerencia
 from app.models.user import User
+from app.schemas.recipe import ProduceRequest, ProduceResponse
 from app.schemas.stock import (
     MovementCreate,
     MovementResponse,
@@ -15,7 +16,7 @@ from app.schemas.stock import (
     StockAlertResponse,
     StockCurrentResponse,
 )
-from app.services import stock_service
+from app.services import recipe_service, stock_service
 
 router = APIRouter(prefix="/api/v1/stock", tags=["stock"])
 
@@ -155,6 +156,28 @@ async def create_movement(
     await db.commit()
     await db.refresh(movement)
     return MovementResponse.model_validate(movement)
+
+
+@router.post(
+    "/produce",
+    response_model=ProduceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def produce(
+    payload: ProduceRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_any_role),
+) -> dict:
+    return await recipe_service.produce(
+        db,
+        product_id=payload.product_id,
+        quantity_boxes=payload.quantity_boxes,
+        user_id=user.id,
+        notes=payload.notes,
+        force=payload.force,
+        ip_address=_client_ip(request),
+    )
 
 
 @router.post(

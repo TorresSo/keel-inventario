@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { productsApi } from '../api/productsApi';
 import { stockApi } from '../api/stockApi';
+import ProduceModal from '../components/production/ProduceModal';
+import RecipeModal from '../components/production/RecipeModal';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import { selectIsGerencia, useAuthStore } from '../store/authStore';
@@ -124,6 +126,8 @@ export default function Stock() {
   const [search, setSearch] = useState('');
   const [movementOpen, setMovementOpen] = useState(false);
   const [newProductOpen, setNewProductOpen] = useState(false);
+  const [produceOpen, setProduceOpen] = useState(false);
+  const [recipeProduct, setRecipeProduct] = useState(null);
   const [historyProduct, setHistoryProduct] = useState(null);
 
   const isGerencia = useAuthStore(selectIsGerencia);
@@ -249,6 +253,13 @@ export default function Stock() {
             ⤓ Exportar
           </button>
           <button
+            onClick={() => setProduceOpen(true)}
+            title="Registrar producción que descuenta materia prima e insumos"
+            className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/20"
+          >
+            🏭 Producir
+          </button>
+          <button
             onClick={() => setMovementOpen(true)}
             className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
           >
@@ -309,6 +320,28 @@ export default function Stock() {
         product={historyProduct}
         onClose={() => setHistoryProduct(null)}
         onAfterChange={() => loadStock()}
+        onEditRecipe={(p) => {
+          setHistoryProduct(null);
+          setRecipeProduct(p);
+        }}
+        isGerencia={isGerencia}
+      />
+
+      <ProduceModal
+        open={produceOpen}
+        onClose={() => setProduceOpen(false)}
+        products={stock}
+        onProduced={() => {
+          setProduceOpen(false);
+          loadStock();
+        }}
+      />
+
+      <RecipeModal
+        open={Boolean(recipeProduct)}
+        onClose={() => setRecipeProduct(null)}
+        product={recipeProduct}
+        products={stock}
       />
     </div>
   );
@@ -944,8 +977,9 @@ function NewProductModal({ open, onClose, onCreated }) {
   );
 }
 
-function HistoryModal({ product, onClose, onAfterChange }) {
-  const isGerencia = useAuthStore(selectIsGerencia);
+function HistoryModal({ product, onClose, onAfterChange, onEditRecipe, isGerencia: isGerenciaProp }) {
+  const isGerenciaStore = useAuthStore(selectIsGerencia);
+  const isGerencia = isGerenciaProp ?? isGerenciaStore;
   const [movements, setMovements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [reversingId, setReversingId] = useState(null);
@@ -1009,6 +1043,16 @@ function HistoryModal({ product, onClose, onAfterChange }) {
       }
       className="max-w-3xl"
     >
+      {isGerencia && product && onEditRecipe && (
+        <div className="mb-3 flex justify-end">
+          <button
+            onClick={() => onEditRecipe(product)}
+            className="rounded-md border border-emerald-500/40 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/10"
+          >
+            ✎ Editar receta
+          </button>
+        </div>
+      )}
       <div className="max-h-[60vh] overflow-y-auto">
         {loading ? (
           <p className="text-slate-400">Cargando...</p>

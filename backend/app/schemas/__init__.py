@@ -10,6 +10,14 @@ from app.schemas.order import (
     OrderResponse,
 )
 from app.schemas.product import ProductBase, ProductCreate, ProductResponse, ProductUpdate
+from app.schemas.recipe import (
+    ProduceConsumptionDetail,
+    ProduceRequest,
+    ProduceResponse,
+    RecipeItem,
+    RecipeItemResponse,
+    RecipeUpdateRequest,
+)
 from app.schemas.stock import (
     MovementCreate,
     MovementResponse,
@@ -42,10 +50,16 @@ __all__ = [
     "OrderItemUpdateRequest",
     "OrderPreviewResponse",
     "OrderResponse",
+    "ProduceConsumptionDetail",
+    "ProduceRequest",
+    "ProduceResponse",
     "ProductBase",
     "ProductCreate",
     "ProductResponse",
     "ProductUpdate",
+    "RecipeItem",
+    "RecipeItemResponse",
+    "RecipeUpdateRequest",
     "ReverseMovementRequest",
     "StockAlertResponse",
     "StockCurrentResponse",

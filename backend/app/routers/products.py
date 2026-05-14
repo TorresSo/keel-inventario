@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_db, require_any_role, require_gerencia
 from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
+from app.schemas.recipe import RecipeItemResponse, RecipeUpdateRequest
+from app.services import recipe_service
 
 router = APIRouter(prefix="/api/v1/products", tags=["products"])
 
@@ -63,6 +65,29 @@ async def update_product(
     await db.commit()
     await db.refresh(product)
     return product
+
+
+@router.get("/{product_id}/recipe", response_model=list[RecipeItemResponse])
+async def get_recipe(
+    product_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_any_role),
+) -> list[dict]:
+    return await recipe_service.get_recipe(db, product_id)
+
+
+@router.put("/{product_id}/recipe", response_model=list[RecipeItemResponse])
+async def set_recipe(
+    product_id: uuid.UUID,
+    payload: RecipeUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_gerencia),
+) -> list[dict]:
+    items = [
+        {"component_id": i.component_id, "quantity_per_box": i.quantity_per_box}
+        for i in payload.items
+    ]
+    return await recipe_service.set_recipe(db, product_id, items)
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
