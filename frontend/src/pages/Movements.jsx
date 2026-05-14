@@ -143,13 +143,16 @@ export default function Movements() {
     <div className="space-y-6">
       {grouped.map(([day, items]) => (
         <section key={day}>
-          <div className="mb-3 flex items-baseline justify-between border-b border-slate-800 pb-2">
-            <h3 className="text-base font-semibold text-slate-100">
-              {formatDayHeader(day)}
-            </h3>
-            <span className="font-mono text-xs text-slate-500">
-              {day} · {items.length} mov.
-            </span>
+          <div className="relative my-6 flex items-center justify-center">
+            <div className="absolute inset-x-0 top-1/2 h-px bg-slate-800" />
+            <div className="relative flex items-baseline gap-3 rounded-full border border-slate-700 bg-slate-950 px-4 py-1.5">
+              <span className="text-sm font-semibold text-slate-100">
+                {formatDayHeader(day)}
+              </span>
+              <span className="font-mono text-xs text-slate-500">
+                {day.split('-').reverse().join('/')} · {items.length} mov.
+              </span>
+            </div>
           </div>
           <ul className="space-y-2">
             {items.map((m) => (
