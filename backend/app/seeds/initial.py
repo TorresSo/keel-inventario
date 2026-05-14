@@ -1,4 +1,7 @@
-"""Initial seed: admin user + product catalog + opening stock.
+"""Initial seed: admin user + full product catalog + opening stock.
+
+The catalog is read directly from STOCK AL DIA 2024.xlsx (the real spreadsheet
+KEEL uses today). 175 products across 11 categories from 3 origins.
 
 Idempotent: re-running skips records that already exist.
 
@@ -6,7 +9,6 @@ Run with:
     python -m app.seeds.initial
 """
 import asyncio
-import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,61 +18,7 @@ from app.database import async_session
 from app.models.product import Product, ProductCategory, ProductOrigin
 from app.models.stock import StockCurrent
 from app.models.user import User, UserRole
-
-PRODUCTS: list[tuple[str, str, ProductCategory, ProductOrigin, int]] = [
-    # ESCOBILLONES - FABRICACION_PROPIA
-    ("210B", "ESCOBILLON PREMIUM", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 18),
-    ("212", "ESCOBILLON ROBLE", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("219", "ESCOBILLON ARRAYAN", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("213", "ESCOBILLON NAHUEL", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 18),
-    ("252", "ESCOBILLON SUPER KALPON", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 14),
-    ("215", "ESCOBILLON ARAUCANO", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("250", "ESCOBILLON GONDOLA KALPON", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("216", "ESCOBILLON GOLF", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 24),
-    ("217", "ESCOBILLON LACAR", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("218", "ESCOBILLON PANDA", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("221", "ESCOBILLON ACONCAGUA", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("283", "ESCOBILLON ARCE", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("405", "ESCOBILLON TRAFUL", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("222", "ESCOBILLON NEWEN", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("230", "ESCOBILLON FORTE", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("215P", "ESCOBILLON PUCARA", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 12),
-    ("210", "ESCOBILLON COMPACTO", ProductCategory.ESCOBILLONES, ProductOrigin.FABRICACION_PROPIA, 14),
-    # BASES_Y_CABOS - FABRICACION_PROPIA
-    ("1016A", "CABO PANDA PINTADO", ProductCategory.BASES_Y_CABOS, ProductOrigin.FABRICACION_PROPIA, 95),
-    ("1016", "CABO PANDA", ProductCategory.BASES_Y_CABOS, ProductOrigin.FABRICACION_PROPIA, 110),
-    ("1017", "CABO PAVONE", ProductCategory.BASES_Y_CABOS, ProductOrigin.FABRICACION_PROPIA, 109),
-    ("1001", "CABO BARRENDERO", ProductCategory.BASES_Y_CABOS, ProductOrigin.FABRICACION_PROPIA, 33),
-    ("1022", "CABO VIOLIN", ProductCategory.BASES_Y_CABOS, ProductOrigin.FABRICACION_PROPIA, 180),
-    ("1006", "CABO DUCATO", ProductCategory.BASES_Y_CABOS, ProductOrigin.FABRICACION_PROPIA, 124),
-    # ESPONJAS Bettanin - IMPORTADO_BRASIL (categorized as ESCOBILLONES per prompt)
-    ("450120", "ESPONJA MULTIUSO IONES DE PLATA", ProductCategory.ESCOBILLONES, ProductOrigin.IMPORTADO_BRASIL, 120),
-    ("BT484", "ESPONJA METALIZADA", ProductCategory.ESCOBILLONES, ProductOrigin.IMPORTADO_BRASIL, 60),
-    ("BT487", "ESPONJA BRILHUS SALVA UÑAS", ProductCategory.ESCOBILLONES, ProductOrigin.IMPORTADO_BRASIL, 60),
-    ("BT4451", "ESPONJA JEITOSA MULTIUSO", ProductCategory.ESCOBILLONES, ProductOrigin.IMPORTADO_BRASIL, 60),
-    ("467", "ESPONJA PARA BAÑO", ProductCategory.ESCOBILLONES, ProductOrigin.IMPORTADO_BRASIL, 36),
-    ("LS7509", "ESPONJA BAÑO EXFOLIANTE", ProductCategory.ESCOBILLONES, ProductOrigin.IMPORTADO_BRASIL, 60),
-]
-
-
-INITIAL_STOCK: dict[str, int] = {
-    "212": 435,
-    "219": 209,
-    "213": 180,
-    "252": 123,
-    "215": 314,
-    "250": 284,
-    "216": 48,
-    "217": 46,
-    "218": 95,
-    "221": 152,
-    "283": 50,
-    "405": 42,
-    "BT4451": 141,
-    "BT487": 86,
-    "450120": 46,
-}
-
+from app.seeds._parse_excel import parse_workbook
 
 ADMIN_EMAIL = "admin@keel.com"
 ADMIN_PASSWORD = "keel2025"
@@ -95,60 +43,67 @@ async def seed_admin_user(db: AsyncSession) -> None:
     print(f"[seed] created admin user: {ADMIN_EMAIL} (role: GERENCIA)")
 
 
-async def seed_products(db: AsyncSession) -> dict[str, uuid.UUID]:
+async def seed_catalog_and_stock(db: AsyncSession) -> None:
+    rows = parse_workbook()
     existing_codes = {
-        row[0] for row in (await db.execute(select(Product.code))).all()
+        r[0] for r in (await db.execute(select(Product.code))).all()
     }
-    code_to_id: dict[str, uuid.UUID] = {}
 
-    for code, name, category, origin, pack_size in PRODUCTS:
+    created_products = 0
+    created_stock = 0
+
+    for r in rows:
+        code = r["code"]
         if code in existing_codes:
+            # ensure stock row exists even if product was created on a prior run
             pid = (
                 await db.execute(select(Product.id).where(Product.code == code))
             ).scalar_one()
-            code_to_id[code] = pid
+            existing_stock = (
+                await db.execute(
+                    select(StockCurrent).where(StockCurrent.product_id == pid)
+                )
+            ).scalar_one_or_none()
+            if existing_stock is None and (r["qty_boxes"] or r["qty_units"]):
+                db.add(
+                    StockCurrent(
+                        product_id=pid,
+                        quantity_boxes=r["qty_boxes"],
+                        quantity_units=r["qty_units"],
+                    )
+                )
+                created_stock += 1
             continue
+
         product = Product(
             code=code,
-            name=name,
-            category=category,
-            origin=origin,
-            pack_size=pack_size,
+            name=r["name"],
+            category=ProductCategory(r["category"]),
+            origin=ProductOrigin(r["origin"]),
+            pack_size=r["pack_size"],
         )
         db.add(product)
         await db.flush()
-        code_to_id[code] = product.id
-        print(f"[seed] product {code:<8s} {name}")
+        created_products += 1
 
-    return code_to_id
-
-
-async def seed_initial_stock(
-    db: AsyncSession, code_to_id: dict[str, uuid.UUID]
-) -> None:
-    for code, qty in INITIAL_STOCK.items():
-        pid = code_to_id.get(code)
-        if pid is None:
-            print(f"[seed] WARNING: product {code} not found in catalog, skipping stock")
-            continue
-
-        existing = (
-            await db.execute(
-                select(StockCurrent).where(StockCurrent.product_id == pid)
+        if r["qty_boxes"] or r["qty_units"]:
+            db.add(
+                StockCurrent(
+                    product_id=product.id,
+                    quantity_boxes=r["qty_boxes"],
+                    quantity_units=r["qty_units"],
+                )
             )
-        ).scalar_one_or_none()
-        if existing is not None:
-            continue
+            created_stock += 1
 
-        db.add(StockCurrent(product_id=pid, quantity_boxes=qty, quantity_units=0))
-        print(f"[seed] stock {code:<8s} {qty} cajas")
+    print(f"[seed] catalog: {created_products} new products")
+    print(f"[seed] stock:   {created_stock} opening balances")
 
 
 async def main() -> None:
     async with async_session() as db:
         await seed_admin_user(db)
-        code_to_id = await seed_products(db)
-        await seed_initial_stock(db, code_to_id)
+        await seed_catalog_and_stock(db)
         await db.commit()
     print("[seed] done")
 
