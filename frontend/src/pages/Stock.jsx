@@ -34,6 +34,50 @@ const CATEGORY_LABEL = {
   FIBRA: 'Fibra',
 };
 
+const CATEGORY_PLURAL = {
+  ESCOBILLONES: 'Escobillones',
+  ESCOBAS: 'Escobas',
+  CEPILLOS: 'Cepillos',
+  SECADORES: 'Secadores',
+  BALDES_Y_ACCESORIOS: 'Varios',
+  ESPONJAS: 'Esponjas',
+  ANDENES: 'Andenes',
+  BASES_Y_CABOS: 'Bases y cabos',
+  MATERIA_PRIMA: 'Materia prima',
+  INSUMOS: 'Insumos',
+  FIBRA: 'Fibra',
+};
+
+// Section order within each tab. Mirrors the order of the original spreadsheet
+// so a returning operator finds things where they expect them.
+const SECTION_ORDER = {
+  ARTICULOS: [
+    'ESCOBILLONES',
+    'ESCOBAS',
+    'CEPILLOS',
+    'SECADORES',
+    'BALDES_Y_ACCESORIOS',
+    'ESPONJAS',
+    'ANDENES',
+  ],
+  BETTANIN_CHINA: ['IMPORTADO_BRASIL', 'IMPORTADO_CHINA'],
+  BASES: ['BASES_Y_CABOS'],
+  MATERIA_PRIMA: ['MATERIA_PRIMA'],
+  INSUMOS: ['INSUMOS'],
+  FIBRA: ['FIBRA'],
+};
+
+const SECTION_LABEL = {
+  ...CATEGORY_PLURAL,
+  IMPORTADO_BRASIL: 'Bettanin (Brasil)',
+  IMPORTADO_CHINA: 'Importado · China',
+};
+
+function sectionKeyOf(product, tab) {
+  if (tab === 'BETTANIN_CHINA') return product.origin;
+  return product.category;
+}
+
 const ORIGIN_LABEL = {
   FABRICACION_PROPIA: 'Propio',
   IMPORTADO_BRASIL: 'Brasil',
@@ -99,6 +143,19 @@ export default function Stock() {
     loadStock();
   }, []);
 
+  // Pressing "/" anywhere focuses the search bar (skip if already typing)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== '/') return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      document.querySelector('input[type="search"]')?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Pre-bucket by tab (O(N) once instead of O(N) per re-render)
   const buckets = useMemo(() => {
     const out = Object.fromEntries(TABS.map((t) => [t.key, []]));
@@ -155,7 +212,11 @@ export default function Stock() {
             {visible.length} {visible.length === 1 ? 'producto' : 'productos'}
             {search && ` · filtrado por "${search}"`}
           </p>
-          <StockTable rows={visible} tab={tab} onRowClick={setHistoryProduct} />
+          <SectionedStock
+            rows={visible}
+            tab={tab}
+            onRowClick={setHistoryProduct}
+          />
         </>
       )}
 
@@ -208,8 +269,9 @@ function SearchBar({ value, onChange }) {
         type="search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Buscar por código o nombre..."
-        className="w-full rounded-md border border-slate-700 bg-slate-900 py-2 pl-9 pr-3 text-sm placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+        onKeyDown={(e) => e.key === 'Escape' && onChange('')}
+        placeholder="Buscar por código o nombre... (atajo: / )"
+        className="w-full rounded-md border border-slate-700 bg-slate-900 py-2 pl-9 pr-8 text-sm placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
       />
       {value && (
         <button
@@ -256,56 +318,124 @@ function Tabs({ tabs, counts, active, onChange }) {
   );
 }
 
+function SectionedStock({ rows, tab, onRowClick }) {
+  // Group rows by section key, preserving the declared section order.
+  const sections = useMemo(() => {
+    const order = SECTION_ORDER[tab] || [];
+    const groups = new Map(order.map((k) => [k, []]));
+    for (const r of rows) {
+      const key = sectionKeyOf(r, tab);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    // sort each group alphabetically by name
+    for (const list of groups.values()) {
+      list.sort((a, b) =>
+        a.product_name.localeCompare(b.product_name, 'es', { sensitivity: 'base' })
+      );
+    }
+    // remove empty groups, return [key, items][] in declared order
+    return Array.from(groups.entries()).filter(([, list]) => list.length > 0);
+  }, [rows, tab]);
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-8 text-center text-sm text-slate-500">
+        Sin productos en esta categoría
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {sections.map(([key, items]) => (
+        <SectionBlock
+          key={key}
+          title={SECTION_LABEL[key] || key}
+          items={items}
+          tab={tab}
+          onRowClick={onRowClick}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SectionBlock({ title, items, tab, onRowClick }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const totalBoxes = items.reduce((s, r) => s + r.quantity_boxes, 0);
+  const belowMin = items.filter((r) => r.is_below_minimum).length;
+
+  return (
+    <section className="rounded-lg border border-slate-700 bg-slate-900">
+      <header
+        onClick={() => setCollapsed((v) => !v)}
+        className="flex cursor-pointer items-center justify-between gap-2 border-b border-slate-800 bg-slate-800/40 px-4 py-2.5 hover:bg-slate-800/70"
+      >
+        <div className="flex items-baseline gap-3">
+          <span
+            className={`inline-block text-slate-500 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+          >
+            ▶
+          </span>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-emerald-300">
+            {title}
+          </h3>
+          <span className="font-mono text-xs text-slate-500">
+            {items.length} productos · {totalBoxes.toLocaleString('es-AR')} cajas
+          </span>
+        </div>
+        {belowMin > 0 && (
+          <Badge variant="danger">{belowMin} bajo mín.</Badge>
+        )}
+      </header>
+      {!collapsed && (
+        <StockTable rows={items} tab={tab} onRowClick={onRowClick} />
+      )}
+    </section>
+  );
+}
+
 function StockTable({ rows, tab, onRowClick }) {
   const showOrigin = tab === 'BETTANIN_CHINA';
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700">
-      <table className="min-w-full divide-y divide-slate-700">
-        <thead className="bg-slate-800">
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-slate-800">
+        <thead className="bg-slate-900">
           <tr>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
               Código
             </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
               Producto
             </th>
             {showOrigin && (
-              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Origen
               </th>
             )}
             <th
-              className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400"
+              className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500"
               title="Fracción: unidades por caja"
             >
               FR
             </th>
-            <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
               Cajas
             </th>
-            <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
               Unidades
             </th>
-            <th className="px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
               Mínimo
             </th>
-            <th className="px-3 py-2.5 text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <th className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-500">
               Estado
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-700 bg-slate-900">
-          {rows.length === 0 && (
-            <tr>
-              <td
-                colSpan={showOrigin ? 8 : 7}
-                className="px-3 py-8 text-center text-sm text-slate-500"
-              >
-                Sin productos en esta categoría
-              </td>
-            </tr>
-          )}
+        <tbody className="divide-y divide-slate-800 bg-slate-950/40">
           {rows.map((r) => (
             <tr
               key={r.product_id}
@@ -315,11 +445,8 @@ function StockTable({ rows, tab, onRowClick }) {
               <td className="px-3 py-2 font-mono text-sm text-emerald-300">
                 {r.product_code}
               </td>
-              <td className="px-3 py-2 text-sm">
-                <p className="text-slate-100">{r.product_name}</p>
-                <p className="text-xs text-slate-500">
-                  {CATEGORY_LABEL[r.category] || r.category}
-                </p>
+              <td className="px-3 py-2 text-sm text-slate-100">
+                {r.product_name}
               </td>
               {showOrigin && (
                 <td className="px-3 py-2 text-xs">
