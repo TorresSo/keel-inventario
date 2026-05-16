@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -99,6 +99,90 @@ async def set_recipe(
 
 def _ceil_div(a: int, b: int) -> int:
     return -(-a // b) if b else 0
+
+
+async def get_producibility(db: AsyncSession) -> dict:
+    """For every product that has a recipe, compute how many boxes can be
+    produced from the current component stock (limited by the scarcest
+    component). Split into 'intermediates' (products that are also components
+    of something else, e.g. cabo, base) and 'finals' (products that are not
+    used as a component anywhere, e.g. escobillón terminado).
+    """
+    P = aliased(Product, name="prod")
+    C = aliased(Product, name="comp")
+    stmt = (
+        select(
+            ProductRecipe.product_id,
+            P.code.label("product_code"),
+            P.name.label("product_name"),
+            P.category.label("product_category"),
+            ProductRecipe.component_id,
+            C.code.label("component_code"),
+            C.name.label("component_name"),
+            ProductRecipe.quantity_per_box,
+            func.coalesce(StockCurrent.quantity_units, 0).label("component_units"),
+        )
+        .join(P, P.id == ProductRecipe.product_id)
+        .join(C, C.id == ProductRecipe.component_id)
+        .outerjoin(
+            StockCurrent, StockCurrent.product_id == ProductRecipe.component_id
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+
+    by_product: dict = {}
+    components_used: set = set()
+    for r in rows:
+        components_used.add(r.component_id)
+        bucket = by_product.setdefault(
+            r.product_id,
+            {
+                "product_id": r.product_id,
+                "product_code": r.product_code,
+                "product_name": r.product_name,
+                "product_category": (
+                    r.product_category.value
+                    if hasattr(r.product_category, "value")
+                    else str(r.product_category)
+                ),
+                "items": [],
+            },
+        )
+        possible = (
+            r.component_units // r.quantity_per_box if r.quantity_per_box > 0 else 0
+        )
+        bucket["items"].append(
+            {
+                "component_code": r.component_code,
+                "component_name": r.component_name,
+                "quantity_per_box": r.quantity_per_box,
+                "component_units_available": r.component_units,
+                "producible_from_this": possible,
+            }
+        )
+
+    intermediates: list[dict] = []
+    finals: list[dict] = []
+    for pid, data in by_product.items():
+        if not data["items"]:
+            continue
+        producible = min(item["producible_from_this"] for item in data["items"])
+        limiting = min(data["items"], key=lambda x: x["producible_from_this"])
+        out = {
+            "product_id": data["product_id"],
+            "product_code": data["product_code"],
+            "product_name": data["product_name"],
+            "product_category": data["product_category"],
+            "producible_boxes": producible,
+            "limiting_component_code": limiting["component_code"],
+            "limiting_component_name": limiting["component_name"],
+            "components_count": len(data["items"]),
+        }
+        (intermediates if pid in components_used else finals).append(out)
+
+    intermediates.sort(key=lambda x: x["product_name"])
+    finals.sort(key=lambda x: x["product_name"])
+    return {"intermediates": intermediates, "finals": finals}
 
 
 async def produce(

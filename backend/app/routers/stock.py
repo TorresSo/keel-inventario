@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, require_any_role, require_gerencia
 from app.models.user import User
-from app.schemas.recipe import ProduceRequest, ProduceResponse
+from app.schemas.recipe import ProduceRequest, ProduceResponse, ProducibilityResponse
 from app.schemas.stock import (
     MovementCreate,
     MovementResponse,
@@ -107,6 +107,17 @@ async def list_alerts(
     _: object = Depends(require_any_role),
 ) -> list[dict]:
     return await stock_service.list_alerts(db)
+
+
+@router.get("/producibility", response_model=ProducibilityResponse)
+async def get_producibility(
+    db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_any_role),
+) -> dict:
+    """How many boxes of each recipe-bearing product can be produced right now,
+    limited by the scarcest component. Split into intermediates (used as
+    components elsewhere) and finals."""
+    return await recipe_service.get_producibility(db)
 
 
 @router.get("/movements", response_model=list[MovementResponse])

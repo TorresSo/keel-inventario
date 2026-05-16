@@ -6,7 +6,14 @@ import Badge from '../ui/Badge';
 import Modal from '../ui/Modal';
 import { notifyError, notifySuccess } from '../../store/uiStore';
 
-export default function ProduceModal({ open, onClose, products, onProduced }) {
+export default function ProduceModal({
+  open,
+  onClose,
+  products,
+  onProduced,
+  initialProductId,
+  initialQuantity,
+}) {
   const [productId, setProductId] = useState('');
   const [qty, setQty] = useState(1);
   const [notes, setNotes] = useState('');
@@ -22,8 +29,11 @@ export default function ProduceModal({ open, onClose, products, onProduced }) {
       setNotes('');
       setRecipe([]);
       setConflict(null);
+      return;
     }
-  }, [open]);
+    if (initialProductId) setProductId(initialProductId);
+    if (initialQuantity && initialQuantity > 0) setQty(initialQuantity);
+  }, [open, initialProductId, initialQuantity]);
 
   // Only finished-good categories make sense as "things to produce"
   const finishedProducts = useMemo(

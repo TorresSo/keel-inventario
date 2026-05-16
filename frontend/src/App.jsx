@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Movements from './pages/Movements';
 import Orders from './pages/Orders';
+import Production from './pages/Production';
 import Stock from './pages/Stock';
 import { selectIsAuthenticated, useAuthStore } from './store/authStore';
 
@@ -39,6 +40,7 @@ export default function App() {
         >
           <Route path="/" element={<Dashboard />} />
           <Route path="/stock" element={<Stock />} />
+          <Route path="/production" element={<Production />} />
           <Route path="/movements" element={<Movements />} />
           <Route path="/orders" element={<Orders />} />
         </Route>

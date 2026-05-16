@@ -310,9 +310,16 @@ export default function Stock() {
       <NewProductModal
         open={newProductOpen}
         onClose={() => setNewProductOpen(false)}
-        onCreated={() => {
+        onCreated={(created, openRecipe) => {
           setNewProductOpen(false);
           loadStock();
+          if (openRecipe && created) {
+            setRecipeProduct({
+              product_id: created.id,
+              product_code: created.code,
+              product_name: created.name,
+            });
+          }
         }}
       />
 
@@ -828,41 +835,42 @@ function MovementModal({ open, onClose, products, onCreated }) {
   );
 }
 
+const INITIAL_PRODUCT_FORM = {
+  code: '',
+  name: '',
+  description: '',
+  category: 'ESCOBILLONES',
+  origin: 'FABRICACION_PROPIA',
+  pack_size: 1,
+  min_stock_boxes: 0,
+  configureRecipe: false,
+};
+
 function NewProductModal({ open, onClose, onCreated }) {
-  const [form, setForm] = useState({
-    code: '',
-    name: '',
-    description: '',
-    category: 'ESCOBILLONES',
-    origin: 'FABRICACION_PROPIA',
-    pack_size: 1,
-    min_stock_boxes: 0,
-  });
+  const [form, setForm] = useState(INITIAL_PRODUCT_FORM);
   const [submitting, setSubmitting] = useState(false);
 
   const update = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
+
+  const isPropia = form.origin === 'FABRICACION_PROPIA';
 
   const submit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await productsApi.create({
-        ...form,
+      const created = await productsApi.create({
+        code: form.code,
+        name: form.name,
         description: form.description || null,
+        category: form.category,
+        origin: form.origin,
         pack_size: Number(form.pack_size) || 1,
         min_stock_boxes: Number(form.min_stock_boxes) || 0,
       });
       notifySuccess(`Producto ${form.code} creado`);
-      setForm({
-        code: '',
-        name: '',
-        description: '',
-        category: 'ESCOBILLONES',
-        origin: 'FABRICACION_PROPIA',
-        pack_size: 1,
-        min_stock_boxes: 0,
-      });
-      onCreated();
+      const shouldOpenRecipe = isPropia && form.configureRecipe;
+      setForm(INITIAL_PRODUCT_FORM);
+      onCreated(created, shouldOpenRecipe);
     } catch (err) {
       notifyError(err.response?.data?.detail || 'No se pudo crear el producto');
     } finally {
@@ -956,6 +964,25 @@ function NewProductModal({ open, onClose, onCreated }) {
             className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           />
         </Field>
+        {isPropia && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-700 bg-slate-900/50 px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.configureRecipe}
+              onChange={(e) => update('configureRecipe', e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-emerald-500"
+            />
+            <span>
+              <span className="text-slate-100">
+                Configurar receta al guardar
+              </span>
+              <span className="ml-1 text-xs text-slate-500">
+                (definí qué materia prima / insumos / fibra consume cada caja
+                producida)
+              </span>
+            </span>
+          </label>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

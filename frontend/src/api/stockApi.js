@@ -18,4 +18,6 @@ export const stockApi = {
   exportXlsx: () =>
     apiClient.get('/stock/export', { responseType: 'blob' }).then((r) => r.data),
   produce: (data) => apiClient.post('/stock/produce', data).then((r) => r.data),
+  getProducibility: () =>
+    apiClient.get('/stock/producibility').then((r) => r.data),
 };

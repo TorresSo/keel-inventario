@@ -50,3 +50,19 @@ class ProduceResponse(BaseModel):
     finished_product_code: str
     finished_quantity_boxes: int
     consumed: list[ProduceConsumptionDetail]
+
+
+class ProducibilityRow(BaseModel):
+    product_id: uuid.UUID
+    product_code: str
+    product_name: str
+    product_category: str
+    producible_boxes: int
+    limiting_component_code: str | None = None
+    limiting_component_name: str | None = None
+    components_count: int
+
+
+class ProducibilityResponse(BaseModel):
+    intermediates: list[ProducibilityRow]
+    finals: list[ProducibilityRow]
